@@ -1,68 +1,131 @@
 import sqlite3
+from colorama import Fore, Style, init
+import os
 
-class Task:
-    def __init__(self, id, description, completed=False):
-        self.id = id
-        self.description = description
-        self.completed = completed
+# Inicializar colorama
+init(autoreset=True)
 
-class TaskList:
-    def __init__(self):
-        self.conn = sqlite3.connect('tasks.db')
-        self.cursor = self.conn.cursor()
-        self.cursor.execute('CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY, description TEXT, completed INTEGER)')
-        self.conn.commit()
+# Função para criar uma conexão com o banco de dados
+def create_connection(db_file):
+    return sqlite3.connect(db_file)
 
-    def add_task(self, description):
-        self.cursor.execute('INSERT INTO tasks (description, completed) VALUES (?, ?)', (description, 0))
-        self.conn.commit()
+# Função para criar a tabela de tarefas
+def create_table(conn):
+    with conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                description TEXT,
+                done BOOLEAN NOT NULL CHECK (done IN (0, 1))
+            );
+        """)
 
-    def delete_task(self, id):
-        self.cursor.execute('DELETE FROM tasks WHERE id = ?', (id,))
-        self.conn.commit()
+# Função para adicionar uma tarefa
+def add_task(conn, title, description):
+    with conn:
+        conn.execute("INSERT INTO tasks (title, description, done) VALUES (?, ?, ?)", (title, description, 0))
 
-    def toggle_task_completion(self, id):
-        self.cursor.execute('UPDATE tasks SET completed = NOT completed WHERE id = ?', (id,))
-        self.conn.commit()
+# Função para excluir uma tarefa
+def delete_task(conn, task_id):
+    with conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        if cur.rowcount == 0:
+            print(Fore.RED + "[Erro] Tarefa não encontrada.")
+        else:
+            print(Fore.RED + "[Tarefa Excluída] ✔")
 
-    def get_tasks(self):
-        self.cursor.execute('SELECT * FROM tasks')
-        rows = self.cursor.fetchall()
-        tasks = []
-        for row in rows:
-            tasks.append(Task(row[0], row[1], row[2]))
-        return tasks
+# Função para marcar/desmarcar uma tarefa como feita
+def toggle_task_done(conn, task_id):
+    cur = conn.cursor()
+    cur.execute("SELECT done FROM tasks WHERE id = ?", (task_id,))
+    result = cur.fetchone()
+    
+    if result is None:
+        print(Fore.RED + "[Erro] Tarefa não encontrada.")
+        return
+    
+    current_status = result[0]
+    new_status = 0 if current_status else 1
+    with conn:
+        conn.execute("UPDATE tasks SET done = ? WHERE id = ?", (new_status, task_id))
+        print(Fore.GREEN + "[Tarefa Atualizada] ✔")
 
-task_list = TaskList()
-
-def print_tasks():
-    tasks = task_list.get_tasks()
-    for task in tasks:
-        print(f"{task.id}. [{'X' if task.completed else ' '}] {task.description}")
-
-while True:
-    print("\nLista de Tarefas:")
-    print_tasks()
-    print("\nOpções:")
-    print("1. Adicionar Tarefa")
-    print("2. Excluir Tarefa")
-    print("3. Marcar/Desmarcar Tarefa como Concluída")
-    print("0. Sair")
-
-    option = input("Escolha uma opção: ")
-
-    if option == '1':
-        description = input("Digite a descrição da nova tarefa: ")
-        task_list.add_task(description)
-    elif option == '2':
-        id = int(input("Digite o número da tarefa a ser excluída: "))
-        task_list.delete_task(id)
-    elif option == '3':
-        id = int(input("Digite o número da tarefa para marcar/desmarcar como concluída: "))
-        task_list.toggle_task_completion(id)
-    elif option == '0':
-        print("Saindo do aplicativo...")
-        break
+# Função para listar todas as tarefas
+def list_tasks(conn):
+    os.system('cls' if os.name == 'nt' else 'clear')  # Limpar tela
+    print(Fore.GREEN + "█████████████████████████████████████████████████████")
+    print(Fore.GREEN + "█████████████████████████████████████████████████████")
+    print(Fore.YELLOW + "          📋 Lista de Tarefas 📋")
+    print(Fore.GREEN + "█████████████████████████████████████████████████████")
+    cur = conn.cursor()
+    cur.execute("SELECT id, title, description, done FROM tasks ORDER BY id")
+    tasks = cur.fetchall()
+    if tasks:
+        for index, task in enumerate(tasks, start=1):
+            id, title, description, done = task
+            done_status = Fore.GREEN + "[✔]" if done else Fore.RED + "[ ]"
+            print(f"{Fore.CYAN}{index:>3}. {done_status} {Fore.WHITE}{title:<30} {description}")
     else:
-        print("Opção inválida. Por favor, tente novamente.")
+        print(Fore.RED + "Nenhuma tarefa encontrada.")
+    print(Fore.GREEN + "█████████████████████████████████████████████████████")
 
+# Função para exibir o menu
+def menu():
+    print(Fore.YELLOW + "\nOpções:")
+    print(Fore.YELLOW + "1. Adicionar Tarefa")
+    print(Fore.YELLOW + "2. Excluir Tarefa")
+    print(Fore.YELLOW + "3. Marcar/Desmarcar Tarefa como Concluída")
+    print(Fore.YELLOW + "0. Sair")
+    choice = input(Fore.CYAN + "Escolha uma opção: ")
+    return choice
+
+# Função principal
+def main():
+    database = 'tasks.db'
+    conn = create_connection(database)
+    create_table(conn)
+
+    while True:
+        list_tasks(conn)
+        choice = menu()
+
+        if choice == '1':
+            title = input(Fore.CYAN + "Título da tarefa: ")
+            description = input(Fore.CYAN + "Descrição da tarefa (ex.: 1hr, 30min): ")
+            add_task(conn, title, description)
+            print(Fore.GREEN + "[Tarefa Adicionada] ✔")
+        elif choice == '2':
+            task_index = int(input(Fore.CYAN + "Número da tarefa a ser excluída: ")) - 1
+            task_id = get_task_id_by_index(conn, task_index)
+            if task_id is not None:
+                delete_task(conn, task_id)
+            else:
+                print(Fore.RED + "[Erro] Número da tarefa inválido.")
+        elif choice == '3':
+            task_index = int(input(Fore.CYAN + "Número da tarefa para marcar/desmarcar como concluída: ")) - 1
+            task_id = get_task_id_by_index(conn, task_index)
+            if task_id is not None:
+                toggle_task_done(conn, task_id)
+            else:
+                print(Fore.RED + "[Erro] Número da tarefa inválido.")
+        elif choice == '0':
+            print(Fore.GREEN + "Saindo do programa... Até logo! 👋")
+            break
+        else:
+            print(Fore.RED + "[Opção Inválida] ❌ Tente novamente.")
+
+    conn.close()
+
+# Função para obter o ID da tarefa a partir do índice exibido
+def get_task_id_by_index(conn, index):
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM tasks ORDER BY id")
+    ids = [row[0] for row in cur.fetchall()]
+    if 0 <= index < len(ids):
+        return ids[index]
+    return None
+
+if __name__ == '__main__':
+    main()
